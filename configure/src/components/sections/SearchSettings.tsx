@@ -255,7 +255,7 @@ export function SearchSettings() {
   const getCatalogOptions = (catalogs: any[] | undefined, mediaType: 'movie' | 'series'): SelectableOption[] => {
     return (catalogs || [])
       .filter((c) => c.type === mediaType || c.type === 'all') // Now just a clean, direct match
-      .filter((c) => c.enabled !== false && c.searchEnabled !== false)    
+      .filter((c) => !!c.enabled && !!c.searchEnabled)    
       .map((c) => ({
         value: `catalog.${c.id}`,
         label: `Catalog: ${c.name || c.id}`,

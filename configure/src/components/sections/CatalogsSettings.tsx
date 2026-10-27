@@ -2773,7 +2773,7 @@ const MergedCatalogCard = ({
 
   const handleToggleSearchEnabled = () => {
     if (!catalog.enabled) return;
-    updateCatalog(c => ({ ...c, searchEnabled: c.searchEnabled === false ? true : false }));
+    updateCatalog(c => ({ ...c, searchEnabled: !c.searchEnabled }));
   };
 
   const handleToggleRatingPosters = () => {
@@ -2925,7 +2925,7 @@ const MergedCatalogCard = ({
                       {isCatalogSearchSupported(catalog) && (
                       <DropdownMenuItem onClick={handleToggleSearchEnabled} disabled={!catalog.enabled}>
                         <Search className={`h-4 w-4 mr-2 ${catalog.searchEnabled !== false && catalog.enabled ? 'text-yellow-400' : 'text-muted-foreground'}`} />
-                        {catalog.searchEnabled !== false && catalog.enabled ? 'Disable as Search' : 'Allow as Search'}
+                        {catalog.searchEnabled && catalog.enabled ? 'Disable as Search' : 'Allow as Search'}
                       </DropdownMenuItem>
                       )}
                       {hasRatingPosters && (
@@ -3260,7 +3260,7 @@ const SortableCatalogItem = React.memo(({ catalog, onEditDiscover, onCustomize, 
       ...prev,
       catalogs: prev.catalogs.map(c =>
         (c.id === catalog.id && c.type === catalog.type) 
-          ? { ...c, searchEnabled: c.searchEnabled === false ? true : false } 
+          ? { ...c, searchEnabled: !c.searchEnabled } 
           : c
       )
     }));
