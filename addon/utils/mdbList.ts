@@ -341,7 +341,7 @@ function listBlockSize(pageSize: number): number {
   return Math.max(pageSize, Math.min(size, 1000));
 }
 
-function buildListItemsUrl(opts: { listId: string; apiKey: string; limit: number; offset: number; sort?: string; order?: string; genre?: string; unified?: boolean; filterScoreMin?: number; filterScoreMax?: number; mediaTypeFilter?: string }): string {
+function buildListItemsUrl(opts: { listId: string; apiKey: string; limit: number; offset: number; sort?: string; order?: string; genre?: string; unified?: boolean; filterScoreMin?: number; filterScoreMax?: number; mediaTypeFilter?: string; filterTitle?: string }): string {
   const { listId, apiKey, limit, offset } = opts;
   const base = listId === 'watchlist'
     ? 'https://api.mdblist.com/watchlist/items'
@@ -355,7 +355,8 @@ function buildListItemsUrl(opts: { listId: string; apiKey: string; limit: number
   if (typeof opts.filterScoreMax === 'number') url += `&filter_score_max=${opts.filterScoreMax}`;
   // MDBList spells series "show".
   if (opts.mediaTypeFilter) url += `&mediatype=${opts.mediaTypeFilter}`;
-
+  if (opts.filterTitle && opts.filterTitle.trim() !== '') url += `&filter_title=${encodeURIComponent(opts.filterTitle)}`;
+  
   return url;
 }
 
@@ -373,9 +374,9 @@ function splitWindowByType(window: any[], catalogType?: string): any[] {
   ];
 }
 
-async function fetchListBlock(opts: { listId: string; apiKey: string; keyScope: string; blockOffset: number; blockSize: number; sort?: string; order?: string; genre?: string; filterScoreMin?: number; filterScoreMax?: number; mediaTypeFilter?: string; ttl: number; ttlSegment: string }): Promise<{ rows: any[]; totalItems?: number; hasMore: boolean }> {
+async function fetchListBlock(opts: { listId: string; apiKey: string; keyScope: string; blockOffset: number; blockSize: number; sort?: string; order?: string; genre?: string; filterScoreMin?: number; filterScoreMax?: number; mediaTypeFilter?: string; ttl: number; ttlSegment: string, filterTitle?: string }): Promise<{ rows: any[]; totalItems?: number; hasMore: boolean }> {
   const { listId, keyScope, blockOffset, blockSize } = opts;
-  const cacheKey = `mdblist-api:block:${keyScope}:${listId}:${blockOffset}:${blockSize}:${opts.sort || ''}:${opts.order || ''}:${opts.genre || ''}:${opts.filterScoreMin ?? ''}:${opts.filterScoreMax ?? ''}:${opts.mediaTypeFilter || ''}${opts.ttlSegment}`;
+  const cacheKey = `mdblist-api:block:${keyScope}:${listId}:${blockOffset}:${blockSize}:${opts.sort || ''}:${opts.order || ''}:${opts.genre || ''}:${opts.filterScoreMin ?? ''}:${opts.filterScoreMax ?? ''}:${opts.mediaTypeFilter || ''}:${opts.filterTitle || ''}${opts.ttlSegment}`;
 
   return cacheWrapGlobal(cacheKey, async () => {
     const url = buildListItemsUrl({ ...opts, unified: true, limit: blockSize, offset: blockOffset });
@@ -396,8 +397,9 @@ async function fetchListBlock(opts: { listId: string; apiKey: string; keyScope: 
   }, opts.ttl, { upstream: true, sourceList: true });
 }
 
-async function fetchMDBListItems(listId: string, apiKey: string, language: string, page: number, sort?: string, order?: string, genre?: string, unified?: boolean, catalogType?: string, cacheTTL?: number, filterScoreMin?: number, filterScoreMax?: number, mediaTypeFilter?: string): Promise<{items: any[], totalItems?: number, hasMore?: boolean, totalPages?: number}> {
+async function fetchMDBListItems(listId: string, apiKey: string, language: string, page: number, sort?: string, order?: string, genre?: string, unified?: boolean, catalogType?: string, cacheTTL?: number, filterScoreMin?: number, filterScoreMax?: number, mediaTypeFilter?: string, filterTitle?: string): Promise<{items: any[], totalItems?: number, hasMore?: boolean, totalPages?: number}> {
   // Use configurable page size (supports CATALOG_LIST_ITEMS_SIZE env var)
+  
   const pageSize = parseInt(process.env.CATALOG_LIST_ITEMS_SIZE as string) || 20;
 
   const keyScope = (listId === 'watchlist' || listId.startsWith('recommended/'))
@@ -408,7 +410,7 @@ async function fetchMDBListItems(listId: string, apiKey: string, language: strin
   // A watchlist is read again once MDBList reports it changed, rather than held for the whole TTL.
   const watchlistedAt = listId === 'watchlist' ? await watchlistActivityStamp(apiKey) : undefined;
   const activitySegment = watchlistedAt ? `:act:${watchlistedAt}` : '';
-  const cacheKey = `mdblist-api:items:${keyScope}:${listId}:${page}:${sort || ''}:${order || ''}:${genre || ''}:${unified !== false}:${catalogType || ''}:${filterScoreMin ?? ''}:${filterScoreMax ?? ''}:${mediaTypeFilter || ''}:${pageSize}${ttlSegment}${activitySegment}`;
+  const cacheKey = `mdblist-api:items:${keyScope}:${listId}:${page}:${sort || ''}:${order || ''}:${genre || ''}:${unified !== false}:${catalogType || ''}:${filterScoreMin ?? ''}:${filterScoreMax ?? ''}:${mediaTypeFilter || ''}:${filterTitle || ''}:${pageSize}${ttlSegment}${activitySegment}`;
 
   const ttl = cacheTTL !== undefined ? cacheTTL : parseInt(process.env.CATALOG_TTL || String(1 * 24 * 60 * 60), 10);
 
@@ -424,7 +426,8 @@ async function fetchMDBListItems(listId: string, apiKey: string, language: strin
       const filtered = !!mediaTypeFilter
         || (!!genre && genre.toLowerCase() !== 'none')
         || typeof filterScoreMin === 'number'
-        || typeof filterScoreMax === 'number';
+        || typeof filterScoreMax === 'number'
+        || !!filterTitle;
 
       const blockSize = listBlockSize(pageSize);
       if (blockSize > pageSize) {
@@ -432,7 +435,7 @@ async function fetchMDBListItems(listId: string, apiKey: string, language: strin
         const block = await fetchListBlock({
           listId, apiKey, keyScope, blockOffset, blockSize,
           sort, order, genre, filterScoreMin, filterScoreMax, mediaTypeFilter,
-          ttl, ttlSegment: `${ttlSegment}${activitySegment}`,
+          ttl, ttlSegment: `${ttlSegment}${activitySegment}`, filterTitle
         });
         const within = offset - blockOffset;
         const window = block.rows.slice(within, within + pageSize);
@@ -447,7 +450,7 @@ async function fetchMDBListItems(listId: string, apiKey: string, language: strin
       } else {
         const url = buildListItemsUrl({
           listId, apiKey, limit: pageSize, offset,
-          sort, order, genre, unified, filterScoreMin, filterScoreMax, mediaTypeFilter,
+          sort, order, genre, unified, filterScoreMin, filterScoreMax, mediaTypeFilter, filterTitle,
         });
         logger.debug(`MDBList request URL: ${sanitizeUrlForLogging(url)}`);
 
