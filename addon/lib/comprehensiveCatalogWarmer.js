@@ -4,6 +4,7 @@ const {
   cacheWrapJikanApi,
   stableStringify,
   projectCatalogPayloadForCache,
+  CATALOG_TTL,
 } = require('./getCache');
 const { sleep } = require('../utils/concurrency');
 const { parseAnimeCatalogMetaBatch } = require('../utils/parseProps');
@@ -26,6 +27,8 @@ const { collectWarmupTargets, extractIdsFromWarmerMeta } = require('./warmupTarg
 const imageWarmQueue = require('./posterCache/warmQueue.js');
 const { warmTrailerAddon } = require('./trailerProjection');
 const { isEndOfList } = require('./catalogPagination');
+let llmCatalogWarmupRunning = false;
+let llmCatalogWarmupTimer = null;
 
 function pinnedCollectionTasks(config, enabledCatalogs) {
   const tasks = new Map();
@@ -1213,6 +1216,85 @@ function forceWarmImages() {
   return warmer.runWarmup(true, { imagesOnly: true });
 }
 
+async function warmLlmCatalogsForUser(userUUID, config) {
+  const catalogs = (config.catalogs || []).filter(catalog =>
+    catalog.enabled !== false
+    && catalog.id?.startsWith('llm.discover.')
+    && (catalog.type === 'movie' || catalog.type === 'series')
+    && catalog.cacheTTL !== 0
+  );
+  const results = [];
+
+  for (const catalog of catalogs) {
+    try {
+      results.push({
+        catalogId: catalog.id,
+        ...(await warmer.warmCatalog(catalog, config, userUUID)),
+      });
+    } catch (error) {
+      logger.error(`Failed to warm saved LLM catalog ${catalog.id} for ${userUUID}: ${error.message}`);
+    }
+  }
+  return results;
+}
+
+async function warmLlmCatalogsAtStartup() {
+  const userUUIDs = await database.getAllUserUUIDs();
+  let warmedUsers = 0;
+  let warmedCatalogs = 0;
+  let minimumCacheTtl = Infinity;
+
+  for (const userUUID of userUUIDs) {
+    try {
+      const config = await loadConfigFromDatabase(userUUID);
+      if (!config) {
+        logger.warn(`Skipping startup LLM warmup for ${userUUID}: configuration not found`);
+        continue;
+      }
+
+      for (const catalog of config.catalogs || []) {
+        if (catalog.enabled === false || !catalog.id?.startsWith('llm.discover.')
+          || (catalog.type !== 'movie' && catalog.type !== 'series') || catalog.cacheTTL === 0) continue;
+        const ttl = Number.isFinite(catalog.cacheTTL) && catalog.cacheTTL > 0
+          ? catalog.cacheTTL
+          : CATALOG_TTL();
+        if (Number.isFinite(ttl) && ttl > 0) minimumCacheTtl = Math.min(minimumCacheTtl, ttl);
+      }
+
+      const results = await warmLlmCatalogsForUser(userUUID, config);
+      if (results.length > 0) {
+        warmedUsers++;
+        warmedCatalogs += results.length;
+      }
+    } catch (error) {
+      logger.error(`Startup LLM catalog warmup failed for ${userUUID}: ${error.message}`);
+    }
+  }
+
+  logger.info(`Startup LLM catalog warmup complete: ${warmedCatalogs} catalog(s) across ${warmedUsers} user(s)`);
+  return Number.isFinite(minimumCacheTtl) ? minimumCacheTtl : CATALOG_TTL();
+}
+
+function startLlmCatalogWarming() {
+  if (llmCatalogWarmupRunning || llmCatalogWarmupTimer) return;
+
+  const runWarmup = async () => {
+    llmCatalogWarmupTimer = null;
+    llmCatalogWarmupRunning = true;
+    let intervalSeconds = CATALOG_TTL();
+    try {
+      intervalSeconds = await warmLlmCatalogsAtStartup();
+    } catch (error) {
+      logger.error(`LLM catalog warmup cycle failed: ${error.message}`);
+    } finally {
+      llmCatalogWarmupRunning = false;
+      llmCatalogWarmupTimer = setTimeout(runWarmup, Math.max(1000, intervalSeconds * 1000));
+    }
+  };
+
+  setImmediate(runWarmup);
+}
+
 function syncCatalogTtlToSchedule() {
   return warmer.syncCatalogTtlToSchedule();
 }
@@ -1226,6 +1308,9 @@ module.exports = {
   getWarmupStats,
   forceRestartWarmup,
   forceWarmImages,
+  warmLlmCatalogsForUser,
+  warmLlmCatalogsAtStartup,
+  startLlmCatalogWarming,
   syncCatalogTtlToSchedule,
   stopComprehensiveWarming
 };

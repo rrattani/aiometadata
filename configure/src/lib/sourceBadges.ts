@@ -16,6 +16,7 @@ export const sourceBadgeStyles: Record<string, string> = {
   movielens: "bg-amber-800/80 text-amber-200 border-amber-600/50 hover:bg-amber-800",
   publicmetadb: "bg-fuchsia-800/80 text-fuchsia-200 border-fuchsia-600/50 hover:bg-fuchsia-800",
   lumiere: "bg-rose-800/80 text-rose-200 border-rose-600/50 hover:bg-rose-800",
+  llm: "bg-zinc-800/80 text-zinc-200 border-zinc-600/50 hover:bg-zinc-800",
 };
 
 export const sourceDotStyles: Record<string, string> = {
@@ -36,6 +37,7 @@ export const sourceDotStyles: Record<string, string> = {
   movielens: 'bg-amber-400',
   publicmetadb: 'bg-fuchsia-400',
   lumiere: 'bg-rose-400',
+  llm: 'bg-zinc-400',
 };
 
 export function getSourceDotStyle(source?: string): string {
@@ -46,6 +48,7 @@ export const sourceBadgeLabels: Record<string, string> = {
   flixpatrol: 'TOP 10',
   publicmetadb: 'PMDB',
   movielens: 'MLENS',
+  llm: 'AI PROMPT',
 };
 
 export function getSourceBadgeStyle(source?: string): string {

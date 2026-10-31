@@ -45,6 +45,7 @@ export interface UserConfig {
     topPoster?: string;
     mdblist?: string;
     gemini?: string;
+    openrouter?: string;
     imdb?: string;
     traktTokenId?: string;
     /** Simkl OAuth token ID stored in oauth_tokens table */

@@ -55,6 +55,10 @@ const host = process.env.HOST_NAME?.startsWith('http')
 
 async function getCatalog(type: string, language: string, page: number, id: string, genre: string, config: UserConfig, userUUID: string, includeVideos: boolean = false, skip?: number): Promise<{ metas: any[] }> {
   try {
+    if (id.startsWith('llm.discover.')) {
+      logger.debug(`Routing to LLM discover catalog handler for id: ${id}`);
+      return { metas: await getLlmDiscoverCatalog(type, id, page, language, config, userUUID, includeVideos) };
+    }
     if (id === 'tvdb.collections') {
       logger.debug(`Fetching TVDB collections catalog: ${id}`);
       const metas = await getTvdbCollectionsCatalog(type, id, page, language, config);
@@ -186,6 +190,85 @@ async function getCatalog(type: string, language: string, page: number, id: stri
     logger.error(`Full stack trace:`, error.stack);
     return { metas: [] };
   }
+}
+
+async function getLlmDiscoverCatalog(
+  type: string,
+  catalogId: string,
+  page: number,
+  language: string,
+  config: UserConfig,
+  userUUID: string,
+  includeVideos: boolean
+): Promise<any[]> {
+  const catalogConfig = config.catalogs?.find(c => c.id === catalogId && c.type === type)
+    || config.catalogs?.find(c => c.id === catalogId);
+  const formState = catalogConfig?.metadata?.discover?.formState || {};
+  const params = catalogConfig?.metadata?.discover?.params
+    || catalogConfig?.metadata?.discoverParams
+    || {};
+  const query = params.llmPrompt ?? formState.llmPrompt;
+  const provider = params.llmProvider ?? formState.llmProvider;
+
+  if (typeof query !== 'string' || !query.trim()) {
+    logger.warn(`[LLM Discover] Missing prompt for catalog ${catalogId}`);
+    return [];
+  }
+  if (provider !== 'gemini' && provider !== 'openrouter') {
+    logger.warn(`[LLM Discover] Unsupported provider for catalog ${catalogId}`);
+    return [];
+  }
+  if (type !== 'movie' && type !== 'series') {
+    logger.warn(`[LLM Discover] Unsupported catalog type for ${catalogId}: ${type}`);
+    return [];
+  }
+
+  const { generateLlmCatalog } = require('../utils/llm-catalog-generator');
+  const generatedCatalog: {
+    results: Array<{
+      id: number;
+      title: string;
+      release_date: string;
+      vote_average: number;
+    }>;
+  } = await generateLlmCatalog({
+    query,
+    provider,
+    requestedModel: params.llmModel ?? formState.llmModel,
+    catalogType: type,
+    catalogId,
+    sortBy: params.sort_by || formState.sortBy || 'popularity.desc',
+    temperature: typeof params.temperature === 'number' ? params.temperature : undefined,
+    apiKeys: config.apiKeys || {},
+    rateLimitKey: userUUID,
+  });
+
+  const pageSize = parseInt(process.env.CATALOG_LIST_ITEMS_SIZE || '20', 10) || 20;
+  const pageNumber = Number.isInteger(page) && page > 0 ? page : 1;
+  const startIndex = (pageNumber - 1) * pageSize;
+  const pageItems = generatedCatalog.results.slice(startIndex, startIndex + pageSize);
+
+  const metas = await mapWithLimit(pageItems, async (item: typeof pageItems[number]) => {
+    try {
+      const tmdbId = String(item.id);
+      const tmdbStremioId = `tmdb:${tmdbId}`;
+      const result = await cacheWrapMetaSmart(userUUID, tmdbStremioId, async () => {
+        return await getMeta(type, language, tmdbStremioId, config, userUUID, includeVideos);
+      }, undefined, { enableErrorCaching: true, maxRetries: 2, config }, type as any, includeVideos);
+      if (!result?.meta) return null;
+      return {
+        ...result.meta,
+        _tmdbId: tmdbId,
+        release_date: item.release_date,
+        vote_average: item.vote_average,
+      };
+    } catch (error: any) {
+      logger.warn(`[LLM Discover] Failed to resolve ${item.title} (TMDB ${item.id}): ${error.message}`);
+      return null;
+    }
+  });
+
+  return metas.filter(Boolean);
 }
 
 
