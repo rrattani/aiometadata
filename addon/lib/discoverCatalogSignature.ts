@@ -18,6 +18,7 @@ const DISCOVER_CATALOG_PREFIXES = [
   'simkl.discover.',
   'anilist.discover.',
   'mal.discover.',
+  'llm.discover.',
 ];
 
 function isDiscoverCatalogId(catalogId: string): boolean {

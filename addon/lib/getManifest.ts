@@ -1165,6 +1165,9 @@ async function getManifest(config: any, opts: { tags?: string[]; hiddenTags?: st
       if (userCatalog.id.startsWith('tmdb.discover.')) {
         return true;
       }
+      if (userCatalog.id.startsWith('llm.discover.')) {
+        return userCatalog.type === 'movie' || userCatalog.type === 'series';
+      }
       if (userCatalog.id.startsWith('tmdb.collection.')) {
         return true;
       }
@@ -1210,6 +1213,18 @@ async function getManifest(config: any, opts: { tags?: string[]; hiddenTags?: st
 
   let catalogs: any[] = await Promise.all(pass1UserCatalogs
     .map(async (userCatalog: any) => {
+      if (userCatalog.id.startsWith('llm.discover.')) {
+        const catalogType = userCatalog.displayType || userCatalog.type;
+        const id = userCatalog.displayType ? `${userCatalog.id}_${userCatalog.type}` : userCatalog.id;
+        return {
+          id,
+          type: catalogType,
+          name: `${showPrefix ? `${prefixName} - ` : ''}${userCatalog.name}`,
+          pageSize: parseInt(process.env.CATALOG_LIST_ITEMS_SIZE || '20', 10) || 20,
+          extra: [{ name: 'skip' }],
+          showInHome: userCatalog.showInHome,
+        };
+      }
       if (isMDBList(userCatalog.id)) {
           logger.debug(`Processing MDBList catalog: ${userCatalog.id}`);
           const result = await createMDBListCatalog(userCatalog, config.apiKeys?.mdblist, mdblistGenresStandard, mdblistGenresAnime, showPrefix, prefixName);

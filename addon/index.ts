@@ -2643,6 +2643,64 @@ addon.get("/api/tmdb/collections/resolve", async (req, res) => {
 // AI-powered catalog creation
 const { LRUCache: AiRateCache } = require('lru-cache');
 const aiCatalogRateLimit = new AiRateCache({ max: 10000, ttl: 60000 });
+addon.post("/api/llm/preview", async (req, res) => {
+  const {
+    query,
+    provider,
+    model: requestedModel,
+    catalogType,
+    sortBy,
+    temperature,
+    geminiKey,
+    openrouterKey,
+    tmdbKey,
+  } = req.body || {};
+
+  if (typeof query !== 'string' || !query.trim()) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
+  if (!['gemini', 'openrouter'].includes(provider)) {
+    return res.status(400).json({ error: 'Provider must be gemini or openrouter' });
+  }
+  if (!['movie', 'series'].includes(catalogType)) {
+    return res.status(400).json({ error: 'Catalog type must be movie or series' });
+  }
+  if (temperature !== undefined && (typeof temperature !== 'number' || !Number.isFinite(temperature) || temperature < 0 || temperature > 2)) {
+    return res.status(400).json({ error: 'Temperature must be a number between 0 and 2' });
+  }
+
+  const apiKey = provider === 'openrouter' ? openrouterKey : geminiKey;
+  if (typeof apiKey !== 'string' || !apiKey.trim()) {
+    return res.status(400).json({ error: `A ${provider} API key is required` });
+  }
+  if (typeof tmdbKey !== 'string' || !tmdbKey.trim()) {
+    return res.status(400).json({ error: 'A TMDB API key is required to generate AI catalogs' });
+  }
+
+  try {
+    const { generateLlmCatalog } = require('./utils/llm-catalog-generator');
+    const preview = await generateLlmCatalog({
+      query,
+      provider,
+      requestedModel,
+      catalogType,
+      sortBy,
+      temperature,
+      apiKeys: { gemini: geminiKey, openrouter: openrouterKey, tmdb: tmdbKey },
+      rateLimitKey: `preview:${req.ip || req.socket?.remoteAddress || 'unknown'}`,
+      isPreview: true,
+    });
+    return res.json(preview);
+  } catch (error) {
+    aiCatalogLogger.error('[LLM Preview] Generation failed:', error.message);
+    if (error.statusCode === 429) {
+      return res.status(429).json({ error: error.message || 'Too many requests. Please wait a moment before trying again.' });
+    }
+    return res.status(error.statusCode >= 400 && error.statusCode < 600 ? error.statusCode : 500)
+      .json({ error: error.message || 'Failed to generate catalog preview' });
+  }
+});
+
 addon.post("/api/ai/create-catalog", async (req, res) => {
   try {
     const { userUUID, password, query, provider, generationMode, model: requestedModel, geminiKey: clientGeminiKey, openrouterKey: clientOpenrouterKey } = req.body;

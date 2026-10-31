@@ -323,6 +323,9 @@ async function startServer(): Promise<void> {
   const { startComprehensiveCatalogWarming } = require('./lib/comprehensiveCatalogWarmer.js');
   startComprehensiveCatalogWarming();
 
+  const { startLlmCatalogWarming } = require('./lib/comprehensiveCatalogWarmer.js');
+  startLlmCatalogWarming();
+
   const { startRecommendationRefresh } = require('./utils/recommendations/refresh.js');
   startRecommendationRefresh();
 
