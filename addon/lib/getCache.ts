@@ -527,7 +527,9 @@ async function cacheWrapInternal(key: string, method: () => Promise<any>, ttl: n
     maxRetries = SELF_HEALING_CONFIG.maxRetries,
     onHit,
     refreshAhead = false,
+    validationContentType,
   } = options;
+  const cacheContentType = validationContentType || contentTypeForKey(key);
 
   const wantsRefreshAhead = refreshAhead === true && isRefreshAheadEnabled();
 
@@ -575,7 +577,7 @@ async function cacheWrapInternal(key: string, method: () => Promise<any>, ttl: n
                     if (fresh === null || fresh === undefined) return false;
                     if (resultClassifier(fresh, null, key).type !== 'SUCCESS') return false;
                     if (!mayReplaceOnRefresh(parsed, fresh)) return false;
-                    if (!cacheValidator.validateBeforeCache(fresh, contentTypeForKey(key)).isValid) return false;
+                    if (!cacheValidator.validateBeforeCache(fresh, cacheContentType).isValid) return false;
                     const written = await redis.set(versionedKey, await encodeCachePayload(fresh), 'EX', ttl, 'XX');
                     return Boolean(written);
                   }, pttlMs).catch(() => {});
@@ -602,8 +604,7 @@ async function cacheWrapInternal(key: string, method: () => Promise<any>, ttl: n
       updateCacheHealth(versionedKey, 'miss', true);
 
     if (result !== null && result !== undefined) {
-        const contentType = contentTypeForKey(key);
-        const validation = cacheValidator.validateBeforeCache(result, contentType);
+        const validation = cacheValidator.validateBeforeCache(result, cacheContentType);
 
         if (!validation.isValid) {
           cacheLogger.warn(`Preventing bad data from being cached for ${versionedKey}:`, validation.issues);
@@ -1472,7 +1473,8 @@ async function cacheWrapCatalog(userUUID: string, catalogKey: string, method: ()
   const isAniListDiscoverCatalog = idOnly.startsWith('anilist.discover.');
   const isSimklDiscoverCatalog = idOnly.startsWith('simkl.discover.');
   const isMalDiscoverCatalog = idOnly.startsWith('mal.discover.');
-  const isDiscoverCatalog = isTmdbDiscoverCatalog || isTvdbDiscoverCatalog || isAniListDiscoverCatalog || isSimklDiscoverCatalog || isMalDiscoverCatalog;
+  const isLlmDiscoverCatalog = idOnly.startsWith('llm.discover.');
+  const isDiscoverCatalog = isTmdbDiscoverCatalog || isTvdbDiscoverCatalog || isAniListDiscoverCatalog || isSimklDiscoverCatalog || isMalDiscoverCatalog || isLlmDiscoverCatalog;
   const isMergedCatalog = idOnly.startsWith('merged.');
   const shouldExcludeLanguageForMAL = isMALCatalog && isMALAnimeProvider;
 
@@ -2681,7 +2683,13 @@ function cacheWrapStremThruGenres(catalogUrl: string, method: () => Promise<any>
   return cacheWrapGlobal(`stremthru-genres:${urlKey}`, method, STREMTHRU_GENRES_TTL);
 }
 
-async function cacheWrapStaticCatalog(userUUID: string, catalogKey: string, method: () => Promise<any>, options: any = {}): Promise<any> {
+async function cacheWrapStaticCatalog(
+  userUUID: string,
+  catalogKey: string,
+  method: () => Promise<any>,
+  options: any = {},
+  ttl: number = STATIC_CATALOG_TTL
+): Promise<any> {
   let config: any;
   try {
     config = await loadConfigFromDatabase(userUUID);
@@ -2718,7 +2726,7 @@ async function cacheWrapStaticCatalog(userUUID: string, catalogKey: string, meth
 
   cacheLogger.debug(`Static catalog cache key (${idOnly}): ${key.substring(0, 120)}...`);
 
-  return cacheWrap(key, method, STATIC_CATALOG_TTL, options);
+  return cacheWrap(key, method, ttl, { ...options, validationContentType: 'unknown' });
 }
 
 function cacheWrapTvdbApi(key: string, method: () => Promise<any>): Promise<any> {

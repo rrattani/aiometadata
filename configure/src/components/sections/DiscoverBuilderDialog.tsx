@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { AlertCircle, AlertTriangle, CircleHelp, Loader2, Search, Trash2, Wand2, X } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CircleHelp, Loader2, Search, Trash2, Wand2, X, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiCache } from '@/utils/apiCache';
 import { CacheTTLField } from '@/components/CacheTTLField';
@@ -31,7 +31,7 @@ interface DiscoverBuilderDialogProps {
 
 type CatalogMediaType = 'movie' | 'series';
 type TmdbMediaType = 'movie' | 'tv';
-type DiscoverSource = 'tmdb' | 'tvdb' | 'anilist' | 'simkl' | 'mal' | 'mdblist';
+type DiscoverSource = 'tmdb' | 'tvdb' | 'anilist' | 'simkl' | 'mal' | 'mdblist' | 'llm';
 type SimklDiscoverMediaType = 'movies' | 'shows' | 'anime';
 type SearchEntity = 'person' | 'company' | 'keyword' | 'network';
 type JoinMode = 'or' | 'and';
@@ -508,6 +508,40 @@ const MAL_SORT_DIRECTION_OPTIONS = [
   { value: 'asc', label: 'Ascending' },
 ] as const;
 
+const LLM_RATING_OPTIONS = [
+  { value: 'G', label: 'G - General Audiences' },
+  { value: 'PG', label: 'PG - Parental Guidance' },
+  { value: 'PG-13', label: 'PG-13 - Parents Strongly Cautioned' },
+  { value: 'R', label: 'R - Restricted' },
+  { value: 'NC-17', label: 'NC-17 - Adults Only' },
+  { value: 'TV-Y', label: 'TV-Y - All Children' },
+  { value: 'TV-Y7', label: 'TV-Y7 - Older Children' },
+  { value: 'TV-G', label: 'TV-G - General Audience' },
+  { value: 'TV-PG', label: 'TV-PG - Parental Guidance' },
+  { value: 'TV-14', label: 'TV-14 - Parents Strongly Cautioned' },
+  { value: 'TV-MA', label: 'TV-MA - Mature Audience' },
+] as const;
+
+const LLM_AGE_OPTIONS = [
+  { value: '2+', label: '2+ Years' },
+  { value: '3+', label: '3+ Years' },
+  { value: '4+', label: '4+ Years' },
+  { value: '5+', label: '5+ Years' },
+  { value: '6+', label: '6+ Years' },
+  { value: '7+', label: '7+ Years' },
+  { value: '8+', label: '8+ Years' },
+  { value: '9+', label: '9+ Years' },
+  { value: '10+', label: '10+ Years' },
+  { value: '11+', label: '11+ Years' },
+  { value: '12+', label: '12+ Years' },
+  { value: '13+', label: '13+ Years' },
+  { value: '14+', label: '14+ Years' },
+  { value: '15+', label: '15+ Years' },
+  { value: '16+', label: '16+ Years' },
+  { value: '17+', label: '17+ Years' },
+  { value: '18+', label: '18+ Years' },
+] as const;
+
 const NONE_VALUE = '__none__';
 const MAX_VOTE_COUNT = 5000;
 const MAX_RUNTIME_MINUTES = 400;
@@ -972,6 +1006,17 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
   const [showMdblistPreviewConfirm, setShowMdblistPreviewConfirm] = useState(false);
   const [mdblistPreviewRemember, setMdblistPreviewRemember] = useState(false);
 
+  // LLM state
+  // Add these near your other state declarations
+  const [llmPrompt, setLlmPrompt] = useState('');
+  const hasLlmKeys = !!(config.apiKeys?.gemini || config.apiKeys?.openrouter);
+  const canUseLlm = hasLlmKeys && !!config.apiKeys?.tmdb;
+  const defaultllmProvider = config.apiKeys?.openrouter ? 'openrouter' : 'gemini';
+  const [llmProvider, setLlmProvider] = useState<'openrouter' | 'gemini'>(defaultllmProvider);
+  const [llmModel, setLlmModel] = useState(''); // Initialize with your default model later
+  const [llmRatings, setLlmRatings] = useState<string[]>([]);
+  const [llmAges, setLlmAges] = useState<string[]>([]);
+
   const tmdbMediaType = toTmdbMediaType(catalogType);
 
   const SOURCE_LABELS: Record<string, string> = {
@@ -1004,6 +1049,9 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
     }
     if (discoverSource === 'tvdb') {
       return catalogType === 'movie' ? TVDB_MOVIE_SORT_OPTIONS : TVDB_SERIES_SORT_OPTIONS;
+    }
+    if (discoverSource === 'llm') {
+      return catalogType === 'movie' ? MOVIE_SORT_OPTIONS.slice(0, 6) : TV_SORT_OPTIONS.slice(0, 6);
     }
     return catalogType === 'movie' ? MOVIE_SORT_OPTIONS : TV_SORT_OPTIONS;
   }, [discoverSource, catalogType, simklMediaType]);
@@ -1358,6 +1406,10 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
 
     setIsSaving(false);
     setAiWarnings([]);
+
+    setLlmPrompt('');
+    setLlmProvider(defaultllmProvider);
+    setLlmModel('');
   };
 
   useEffect(() => {
@@ -1365,13 +1417,16 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
 
     resetState();
 
-    const fs = editingCatalog.metadata?.discover?.formState;
-    if (!fs) return;
+    const fs = editingCatalog.metadata?.discover?.formState || {};
+    const discoverParams = editingCatalog.metadata?.discover?.params
+      || editingCatalog.metadata?.discoverParams
+      || {};
   
     // Shared
     if (fs.catalogName) setCatalogName(fs.catalogName);
     if (fs.discoverSource) setDiscoverSource(fs.discoverSource);
-    if (fs.sortBy) setSortBy(fs.sortBy);
+    if (discoverParams.sort_by) setSortBy(discoverParams.sort_by);
+    else if (fs.sortBy) setSortBy(fs.sortBy);
     setCacheTTL(fs.cacheTTL ?? null);
     if (fs.catalogType) setCatalogType(fs.catalogType);
   
@@ -1514,6 +1569,15 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
     if (fs.mdblistGenreMode) setMdblistGenreMode(fs.mdblistGenreMode);
     if (fs.mdblistGenreSelection) setMdblistGenreSelection(fs.mdblistGenreSelection);
     if (fs.aiWarnings?.length) setAiWarnings(fs.aiWarnings);
+
+    // LLM
+    if (discoverParams.llmPrompt || fs.llmPrompt) setLlmPrompt(discoverParams.llmPrompt || fs.llmPrompt);
+    if (discoverParams.llmProvider || fs.llmProvider) setLlmProvider(discoverParams.llmProvider || fs.llmProvider);
+    if (discoverParams.llmModel || fs.llmModel) setLlmModel(discoverParams.llmModel || fs.llmModel);
+    /* 
+    if (fs.llmRatings) setLlmRatings(fs.llmRatings); 
+    if (fs.llmAges) setLlmAges(fs.llmAges);
+    */
   }, [isOpen, editingCatalog]);
 
   useEffect(() => {
@@ -1593,6 +1657,15 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
     if (fs.mdblistGenres) setMdblistGenres(fs.mdblistGenres);
     if (fs.mdblistGenreMode) setMdblistGenreMode(fs.mdblistGenreMode);
     if (fs.mdblistGenreSelection) setMdblistGenreSelection(fs.mdblistGenreSelection);
+
+    // LLM
+    if (fs.llmPrompt) setLlmPrompt(fs.llmPrompt);
+    if (fs.llmProvider) setLlmProvider(fs.llmProvider);
+    if (fs.llmModel) setLlmModel(fs.llmModel);
+    /*
+    if (fs.llmRatings) setLlmRatings(fs.llmRatings); 
+    if (fs.llmAges) setLlmAges(fs.llmAges);
+    */
 
     toast.info("Template Applied", {
       description: `Pre-populated filters based on ${customizeTemplate.name.replace(' (Custom)', '')}`
@@ -1721,7 +1794,7 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
           setReferences(null);
           return;
         }
-        if (discoverSource === 'tmdb') {
+        if (discoverSource === 'tmdb' /* || discoverSource === 'llm' */ ) {
           const cacheKey = `tmdb_discover_reference_${tmdbMediaType}_${config.language || 'en-US'}`;
           const data = await apiCache.cachedFetch<TmdbDiscoverReferenceResponse>(
             cacheKey,
@@ -2101,8 +2174,33 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
         const mdblistData = await executeMdblistPreview(params);
         results = mdblistData.results;
         totalResults = mdblistData.totalResults;
+        } else if (discoverSource === 'llm') {
+          if (!llmPrompt.trim()) throw new Error("Prompt cannot be empty");        
+          const response = await fetch('/api/llm/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+            query: llmPrompt.trim(),
+            provider: llmProvider,
+            model: llmModel,
+            catalogType,
+            sortBy,
+            geminiKey: config.apiKeys?.gemini || undefined,
+            openrouterKey: config.apiKeys?.openrouter || undefined,
+            tmdbKey: config.apiKeys?.tmdb || undefined,
+            }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Generation failed');
+        
+        // Auto-fill the catalog name with the AI's generated title if the user hasn't named it yet
+        if (!catalogName) setCatalogName(data.catalog_title);
+
+        results = data.results || [];
+        totalResults = results.length;
       }
-  
+    
       setPreviewResults(results);
       setPreviewTotalResults(totalResults);
     } catch (error) {
@@ -2305,6 +2403,16 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
       }
 
       return tvdbParams;
+    }    
+
+    if (discoverSource === 'llm') {
+      const llmParams: Record<string, string | number | boolean> = {
+        sort_by: sortBy,
+        llmPrompt: llmPrompt.trim(),
+        llmProvider,
+        llmModel,
+      };
+      return llmParams;
     }
 
     const params: Record<string, string | number | boolean> = {
@@ -2694,6 +2802,7 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
           mal: 'mal.discover',
           anilist: 'anilist.discover',
           mdblist: 'mdblist.discover',
+          llm: 'llm.discover',
         };
         const sourcePrefix = SOURCE_PREFIXES[discoverSource] ?? 'tmdb.discover';
         const catalogTypeSegment = discoverSource === 'simkl'
@@ -2717,7 +2826,7 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
           );
   
       const SOURCE_LABELS: Record<string, string> = {
-        tmdb: 'TMDB', tvdb: 'TVDB', simkl: 'SIMKL', mal: 'MAL', anilist: 'ANILIST', mdblist: 'MDBLIST',
+        tmdb: 'TMDB', tvdb: 'TVDB', simkl: 'SIMKL', mal: 'MAL', anilist: 'ANILIST', mdblist: 'MDBLIST', llm: 'LLM',
       };
       const sourceLabel = SOURCE_LABELS[discoverSource] ?? 'TMDB';
   
@@ -2729,7 +2838,9 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
             ? simklCatalogType
             : catalogType;
   
-      const discoverUrl = discoverSource === 'tmdb'
+      const discoverUrl = discoverSource === 'llm' 
+        ? `ai://generative` 
+        : discoverSource === 'tmdb'
         ? buildTmdbDiscoverWebUrl(tmdbMediaType, params)
         : discoverSource === 'tvdb'
           ? buildTvdbDiscoverApiUrl(catalogType, params)
@@ -2961,6 +3072,13 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
                         </SelectItem>
                         <SelectItem value="mdblist" disabled={!hasMdblistApiKey}>
                           {hasMdblistApiKey ? 'MDBList' : 'MDBList (No API Key)'}
+                        </SelectItem>
+                        <SelectItem value="llm" disabled={!canUseLlm}>
+                          {!hasLlmKeys
+                            ? 'LLM (No LLM API Key)'
+                            : !config.apiKeys?.tmdb
+                              ? 'LLM (TMDB API Key Required)'
+                              : 'LLM'}
                         </SelectItem>
                       </SelectContent>
                     </Select>
@@ -3470,7 +3588,7 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
                       </div>
                     </CardContent>
                   </Card>
-                  )}
+                  )}              
                   {discoverSource === 'mdblist' && (
                   <div className="space-y-4">
                     {/* Sort Direction */}
@@ -3981,7 +4099,7 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
                 ) : null}
               </CardContent>
             </Card>
-            {(discoverSource === 'tmdb' || discoverSource === 'tvdb') && (
+            {(discoverSource === 'tmdb' || discoverSource === 'tvdb' /* || discoverSource === 'llm' */) && (
               <Card>
               <CardHeader>
                 <CardTitle className="text-base">Reference Filters</CardTitle>
@@ -4001,7 +4119,7 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
 
                 {!isLoadingReferences && (
                   <>
-                    <div className={discoverSource === 'tmdb' ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'grid grid-cols-1 gap-4'}>
+                    <div className={ (discoverSource === 'tmdb' /* || discoverSource === 'llm' */) ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'grid grid-cols-1 gap-4'}>
                       <div className="space-y-2">
                         <Label>Include Genres</Label>
                         <Select value={undefined} onValueChange={(value) => handleAddGenre('include', value)}>
@@ -4021,7 +4139,7 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
                         {renderSelectedItems(includeGenres, (id) => setIncludeGenres(prev => removeItemById(prev, id)), 'No included genres')}
                       </div>
 
-                      {discoverSource === 'tmdb' && (
+                      {(discoverSource === 'tmdb' /* || discoverSource === 'llm' */ ) && (
                         <div className="space-y-2">
                           <Label>Exclude Genres</Label>
                           <Select value={undefined} onValueChange={(value) => handleAddGenre('exclude', value)}>
@@ -4044,7 +4162,7 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                      {discoverSource === 'tmdb' && (
+                      {(discoverSource === 'tmdb' /* || discoverSource === 'llm' */) && (
                         <div className="space-y-2">
                           <LabelWithTooltip tooltip="OR returns titles with any selected genre. AND narrows results to titles containing all selected genres.">
                             Genre Match Mode
@@ -4063,8 +4181,8 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
                           </Select>
                         </div>
                       )}
-                      {discoverSource === 'tmdb' ? (
-                        <>
+                      {(discoverSource === 'tmdb' /* || discoverSource === 'llm' */) ? (
+                          <>
                           <div className="space-y-2">
                             <LabelWithTooltip tooltip="Titles originally in any of the selected languages.">
                               Original Languages
@@ -4087,6 +4205,7 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
                               return match ? (match.english_name || match.name || code) : code;
                             }, setOriginalLanguage)}
                           </div>
+                          {(discoverSource === 'tmdb' /* || discoverSource === 'llm' */) && (
                           <div className="space-y-2">
                             <LabelWithTooltip tooltip="Titles from any of the selected countries.">
                               Origin Countries
@@ -4109,6 +4228,7 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
                               return match ? (match.english_name || code) : code;
                             }, setOriginCountry)}
                           </div>
+                          )}
                         </>
                       ) : (
                         <>
@@ -4146,7 +4266,7 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
                         </div>
                         </>
                       )}
-                      {catalogType === 'movie' && discoverSource === 'tmdb' && (
+                      {catalogType === 'movie' && (discoverSource === 'tmdb' /* || discoverSource === 'llm' */) && (
                         <div className="space-y-2">
                           <Label>Release Region (Movies)</Label>
                           <Select value={releaseRegion || NONE_VALUE} onValueChange={(value) => setReleaseRegion(value === NONE_VALUE ? '' : value)}>
@@ -4166,7 +4286,7 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
                       )}
                     </div>
 
-                    {(discoverSource === 'tmdb' ? catalogType === 'movie' : true) && (
+                    {( /* discoverSource !== 'llm' && */ (discoverSource === 'tmdb' ? catalogType === 'movie' : true)) && (
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="space-y-2">
                           {discoverSource === 'tmdb' ? (
@@ -4243,13 +4363,172 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
                               </SelectContent>
                             </Select>
                           </div>
-                        )}
+                        )}                        
                       </div>
                     )}
+                    
+                    { false /*discoverSource === 'llm' */ && (
+                          <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
+                            {/* RATINGS SELECTOR */}
+                            <div className="space-y-2">
+                              <Label>Allowed Ratings (Optional)</Label>
+                              <p className="text-[10px] text-muted-foreground">Select the specific content ratings the AI is allowed to include.</p>
+                              <Select
+                                value=""
+                                onValueChange={(value) => {
+                                  if (value && !llmRatings.includes(value)) {
+                                    setLlmRatings(prev => [...prev, value]);
+                                  }
+                                }}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select a rating to allow" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {LLM_RATING_OPTIONS.filter(r => !llmRatings.includes(r.value)).map(rating => (
+                                    <SelectItem key={rating.value} value={rating.value}>
+                                      {rating.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              {llmRatings.length > 0 ? (
+                                <div className="flex flex-wrap gap-2">
+                                  {llmRatings.map(ratingVal => {
+                                    const ratingObj = LLM_RATING_OPTIONS.find(r => r.value === ratingVal);
+                                    return (
+                                      <Badge key={ratingVal} variant="secondary" className="gap-1 pl-2 pr-1 py-1">
+                                        <span className="max-w-[180px] truncate">{ratingObj?.label || ratingVal}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setLlmRatings(prev => prev.filter(r => r !== ratingVal))}
+                                          className="rounded-sm p-0.5 hover:bg-background/50"
+                                          aria-label={`Remove ${ratingVal}`}
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                        </button>
+                                      </Badge>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">No ratings selected</p>
+                              )}
+                            </div>
+
+                            {/* COMMON SENSE MEDIA AGES SELECTOR */}
+                            <div className="space-y-2">
+                              <Label>Target Age Demographics (Optional)</Label>
+                              <p className="text-[10px] text-muted-foreground">Force the AI to target specific Common Sense Media age brackets.</p>
+                              <Select
+                                value=""
+                                onValueChange={(value) => {
+                                  if (value && !llmAges.includes(value)) {
+                                    setLlmAges(prev => [...prev, value]);
+                                  }
+                                }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select a target age" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {LLM_AGE_OPTIONS.filter(a => !llmAges.includes(a.value)).map(age => (
+                                  <SelectItem key={age.value} value={age.value}>
+                                    {age.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            {llmAges.length > 0 ? (
+                              <div className="flex flex-wrap gap-2">
+                                {llmAges.map(ageVal => {
+                                  const ageObj = LLM_AGE_OPTIONS.find(a => a.value === ageVal);
+                                  return (
+                                    <Badge key={ageVal} variant="secondary" className="gap-1 pl-2 pr-1 py-1">
+                                      <span className="max-w-[180px] truncate">{ageObj?.label || ageVal}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setLlmAges(prev => prev.filter(a => a !== ageVal))}
+                                        className="rounded-sm p-0.5 hover:bg-background/50"
+                                        aria-label={`Remove ${ageVal}`}
+                                      >
+                                        <Trash2 className="h-3 w-3" />
+                                      </button>
+                                    </Badge>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">No ages selected</p>
+                            )}
+                          </div>
+
+                        </div>
+                        )}                    
                   </>
                 )}
               </CardContent>
             </Card>
+            )}
+            {discoverSource === 'llm' && (
+              <Card className="border-slate-500/20 bg-slate-500/5">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-slate-400" />
+                    AI Generation Settings
+                  </CardTitle>
+                  <CardDescription>
+                    Describe what you want to watch and AI will create the perfect catalog.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {!config.apiKeys?.tmdb && (
+                    <Callout variant="warn">
+                      Add a TMDB API key in Integrations to preview and save AI catalogs. TMDB provides posters, ratings, and metadata for generated titles.
+                    </Callout>
+                  )}
+                  <Callout variant="warn">
+                    Clicking "Preview" will execute this prompt against your selected LLM provider. This consumes API tokens and may incur charges depending on your plan.
+                  </Callout>
+
+                  <div className="space-y-2">
+                    <Label>Your Prompt</Label>
+                    <textarea
+                      value={llmPrompt}
+                      onChange={(e) => setLlmPrompt(e.target.value)}
+                      placeholder="e.g. 50 cozy 90s sci-fi movies perfect for a rainy sunday..."
+                      className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 resize-y"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>AI Provider</Label>
+                      <Select 
+                        value={llmProvider} 
+                        onValueChange={(v: 'openrouter' | 'gemini') => setLlmProvider(v)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="gemini" disabled={!config.apiKeys?.gemini}>Google Gemini</SelectItem>
+                          <SelectItem value="openrouter" disabled={!config.apiKeys?.openrouter}>OpenRouter</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label>Model</Label>
+                      <Input 
+                        value={llmModel}
+                        onChange={(e) => setLlmModel(e.target.value)}
+                        placeholder={llmProvider === 'gemini' ? "gemini-2.5-flash" : "google/gemini-2.5-flash"}
+                      />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             )}
             {(discoverSource === 'tmdb' || discoverSource === 'tvdb') && (
               <Card>
@@ -5665,11 +5944,11 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
                 ) : previewResults.length > 0 ? (
                   <div className="grid grid-cols-4 md:grid-cols-6 gap-3">
                     {previewResults.map((item) => (
-                      <div key={item.id} className="space-y-1">
+                      <div key={item.id || item.imdb_id || `${item.title}-${item.release_date || item.year}`} className="space-y-1">
                         {item.poster_path ? (
                           <img
                             src={
-                              discoverSource === 'tmdb' && item.poster_path
+                              (discoverSource === 'tmdb' || discoverSource === 'llm') && item.poster_path
                                 ? `https://image.tmdb.org/t/p/w185${item.poster_path}`
                                 : discoverSource === 'tvdb' && item.poster_path && !item.poster_path.startsWith('http')
                                   ? `https://artworks.thetvdb.com${item.poster_path}`
@@ -5686,11 +5965,20 @@ export function DiscoverBuilderDialog({ isOpen, onClose, editingCatalog, customi
                         )}
                         <p className="text-xs truncate" title={item.title}>{item.title}</p>
                         <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                          {item.vote_average && <span>⭐ {item.vote_average.toFixed(1)}</span>}
+                          {item.vote_average && (
+                            <span>⭐ {item.vote_average.toFixed(1)}</span>
+                          )}
                           {item.score && <span>⭐ {item.score}%</span>}
-                          {item.release_date && <span>{item.release_date.substring(0, 4)}</span>}
+                          {item.release_date && (
+                            <span>{discoverSource === 'llm' ? item.release_date : item.release_date.substring(0, 4)}</span>
+                          )}
                           {item.year && !item.release_date && <span>{item.year}</span>}
                         </div>
+                        {discoverSource === 'llm' && item.imdb_id && (
+                          <p className="text-xs text-muted-foreground truncate" title={item.imdb_id}>
+                            IMDb: {item.imdb_id}
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>

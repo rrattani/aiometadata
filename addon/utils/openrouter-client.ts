@@ -43,6 +43,7 @@ interface GenerateContentOptions {
   model: string;
   prompt: string;
   systemPrompt?: string;
+  temperature?: number;
   timeout?: number;
   /**
    * Without this OpenRouter reserves the model's full output window and refuses
@@ -69,7 +70,7 @@ interface GenerateContentResult {
   usage: { promptTokens?: number; completionTokens?: number; cost?: number } | null;
 }
 
-async function generateContent({ apiKey, model, prompt, systemPrompt, timeout = 30000, maxTokens = 8192, reasoningEffort }: GenerateContentOptions): Promise<GenerateContentResult> {
+async function generateContent({ apiKey, model, prompt, systemPrompt, temperature, timeout = 30000, maxTokens = 8192, reasoningEffort }: GenerateContentOptions): Promise<GenerateContentResult> {
   const url = `${OPENROUTER_BASE_URL}/chat/completions`;
   const startTime = Date.now();
 
@@ -85,6 +86,10 @@ async function generateContent({ apiKey, model, prompt, systemPrompt, timeout = 
 
   if (reasoningEffort) {
     body.reasoning = { effort: reasoningEffort };
+  }
+
+  if (temperature !== undefined) {
+    body.temperature = temperature;
   }
 
   try {

@@ -70,7 +70,7 @@ export interface CatalogConfig {
   enabled: boolean;
   searchEnabled?: boolean;
   tags?: string[];
-  source: 'tmdb' | 'tvdb' | 'mal' | 'tvmaze' | 'mdblist' | 'trakt' | 'streaming' | 'stremthru' | 'custom' | 'anilist' | 'letterboxd' | 'simkl' | 'movielens' | 'flixpatrol' | 'publicmetadb' | 'recommendations' | 'merged' | 'lumiere' | 'aiom'; // Keep source as the display label
+  source: 'tmdb' | 'tvdb' | 'mal' | 'tvmaze' | 'mdblist' | 'trakt' | 'streaming' | 'stremthru' | 'custom' | 'anilist' | 'letterboxd' | 'simkl' | 'movielens' | 'flixpatrol' | 'publicmetadb' | 'recommendations' | 'merged' | 'lumiere' | 'aiom' | 'llm'; // Keep source as the display label
   sourceUrl?: string; // Store the actual URL for StremThru and custom catalogs
   showInHome: boolean;
   genres?: string[]; // Optional genres array for catalogs that support genre filtering
@@ -141,7 +141,7 @@ export interface CatalogConfig {
     countrySlug?: string;
     discover?: {
       version?: number;
-      source?: 'tmdb' | 'tvdb' | 'anilist' | 'simkl' | 'mal' | 'mdblist';
+      source?: 'tmdb' | 'tvdb' | 'anilist' | 'simkl' | 'mal' | 'mdblist' | 'llm';
       mediaType?: 'movie' | 'tv' | 'series' | 'anime';
       params?: Record<string, string | number | boolean>;
       formState?: Record<string, any>;
@@ -181,6 +181,8 @@ export interface CatalogConfig {
     /** Only offered to a Jellyfin card that holds the account backing this catalog. */
     accountsOnly?: boolean;
     accountOwner?: string;
+    // LLM Prompt specific  metadata
+    prompt?: string;
   };
 }
 
