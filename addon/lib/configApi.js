@@ -61,6 +61,20 @@ function manifestIdentifier(userUUID) {
   if (!isAliasFeatureEnabled()) return userUUID;
   return getAliasForUuid(userUUID) || userUUID;
 }
+
+function scheduleLlmCatalogWarmup(userUUID, config) {
+  setImmediate(() => {
+    try {
+      const { warmLlmCatalogsForUser } = require('./comprehensiveCatalogWarmer');
+      warmLlmCatalogsForUser(userUUID, config).catch(error => {
+        logger.error(`Could not warm saved LLM catalogs for ${userUUID}: ${error.message}`);
+      });
+    } catch (error) {
+      logger.error(`Could not start LLM catalog warming for ${userUUID}: ${error.message}`);
+    }
+  });
+}
+
 const {
   sanitizeAiTriggerKeyword,
   MIN_AI_TRIGGER_KEYWORD_LENGTH,
@@ -633,6 +647,8 @@ class ConfigApi {
         logger.warn(`Could not start recommendation warm: ${warmError.message}`);
       }
 
+      scheduleLlmCatalogWarmup(userUUID, persistedConfig || configWithTimestamp);
+
       res.json({
         success: true,
         userUUID,
@@ -1053,6 +1069,8 @@ class ConfigApi {
         logger.error(`Error accessing Redis for cache invalidation:`, redisError);
       }
       
+      scheduleLlmCatalogWarmup(userUUID, persistedConfig || configWithTimestamp);
+
       res.json({
         success: true,
         userUUID,
